@@ -21,6 +21,9 @@ DerivedData
 *.ipa
 *.xcuserstate
 **/.xcode.env.local
+rtcConfig.tsx
+functions/
+package.json
 
 # Android/IntelliJ
 #

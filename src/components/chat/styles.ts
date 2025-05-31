@@ -1,0 +1,1 @@
+export const ATTACHMENT_SHEET_HEIGHT = 150;

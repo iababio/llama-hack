@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import Tts from 'react-native-tts';
 
-// Define interface for Voice object
 interface Voice {
   id: string;
   name: string;
@@ -58,10 +57,10 @@ export default function App() {
             'com.apple.voice.premium.en-US.Evan', // Male Siri-like voice
             'com.apple.voice.premium.en-US.Tom', // Male voice
             'com.apple.voice.premium.en-US.Nicky', // Female voice
-            // 'com.apple.ttsbundle.siri_female_en-US_compact',
-            // 'com.apple.ttsbundle.siri_male_en-US_compact',
-            // 'com.apple.voice.enhanced.en-US.Zoe',
-            // 'com.apple.voice.enhanced.en-US.Evan',
+            'com.apple.ttsbundle.siri_female_en-US_compact',
+            'com.apple.ttsbundle.siri_male_en-US_compact',
+            'com.apple.voice.enhanced.en-US.Zoe',
+            'com.apple.voice.enhanced.en-US.Evan',
             'Zoe',
             'Evan',
           ];
