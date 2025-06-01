@@ -178,27 +178,7 @@ const ChatInput = ({
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.attachmentOption}
-            onPress={() => onAttachmentOption?.('gallery')}>
-            <View style={[styles.attachmentIcon, {backgroundColor: '#007AFF'}]}>
-              <Ionicons name="images" size={24} color="white" />
-            </View>
-            <Text style={[styles.attachmentText, isDark && {color: '#FFFFFF'}]}>
-              Gallery
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.attachmentOption}
-            onPress={() => onAttachmentOption?.('document')}>
-            <View style={[styles.attachmentIcon, {backgroundColor: '#34C759'}]}>
-              <Ionicons name="document" size={24} color="white" />
-            </View>
-            <Text style={[styles.attachmentText, isDark && {color: '#FFFFFF'}]}>
-              Document
-            </Text>
-          </TouchableOpacity>
+          
 
           <TouchableOpacity
             style={styles.attachmentOption}
