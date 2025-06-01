@@ -3,7 +3,7 @@ import {View, StyleSheet} from 'react-native';
 import WeatherCard from './WeatherCard';
 import RestaurantCard from './RestaurantCard';
 import ShopCard from './ShopCard';
-import MenuCard from '../menu/MenuCard';
+import MenuCard from './MenuCard';
 
 interface ExternalQueryCardProps {
   data: any;

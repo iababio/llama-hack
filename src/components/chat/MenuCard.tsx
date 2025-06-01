@@ -292,9 +292,6 @@ Please let me know your preferences so I can help you place the perfect order! I
           [{text: 'OK'}]
         );
       }
-
-      // DON'T clear selection after getting details - keep them selected
-      // setSelectedItems(new Set()); // Remove this line
       
     } catch (error) {
       console.error('Error getting dish details:', error);
