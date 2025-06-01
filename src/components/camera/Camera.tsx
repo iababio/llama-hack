@@ -9,7 +9,6 @@ import {
   Animated,
   Alert,
   Image,
-  ScrollView,
   Dimensions,
 } from 'react-native';
 import {useSharedValue} from 'react-native-reanimated';
@@ -19,7 +18,9 @@ import {
   useCameraDevices,
   useFrameProcessor,
 } from 'react-native-vision-camera';
+import RNFS from 'react-native-fs';
 import {Label} from './Label';
+import {CONFIG} from '../../utils/rtcConfig';
 
 const {width, height} = Dimensions.get('window');
 
@@ -40,9 +41,6 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
 
   const {
     connectStatus = 'notConnect',
-    peerConnection = null,
-    dataChannel = null,
-    localStreamRef = null,
   } = webRTCState;
 
   const {handleOpenAIEvent = () => {}, addMessage = () => {}} = webRTCHandlers;
@@ -54,6 +52,7 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhotos, setCapturedPhotos] = useState<CapturedPhoto[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [isProcessingImages, setIsProcessingImages] = useState(false); // Add new state for processing
   const currentLabel = useSharedValue('');
 
   // Animation states
@@ -68,14 +67,12 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
 
   // Handle back button press
   const handleBackPress = () => {
-    // Don't disconnect WebRTC here since it's managed by App component
     navigation?.goBack();
   };
 
   // Start animations based on connection status
   useEffect(() => {
     if (connectStatus === 'connecting') {
-      // Rotating animation while connecting
       Animated.loop(
         Animated.timing(rotateAnim, {
           toValue: 1,
@@ -107,8 +104,7 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
       pulseAnim.setValue(1);
       rotateAnim.setValue(0);
     }
-  }, [connectStatus]);
-
+  }, [connectStatus, pulseAnim, rotateAnim]);
 
   useEffect(() => {
     const requestPermissions = async () => {
@@ -155,15 +151,15 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
     [currentLabel],
   );
 
-  
-  // Handle picture capture - now takes 4 snapshots
+  // Handle picture capture - now takes 1 snapshot
   const handleTakePicture = async () => {
-    if (!camera.current || isCapturing) return;
+    if (!camera.current || isCapturing) {
+      return;
+    }
 
     try {
       setIsCapturing(true);
-      const photos: CapturedPhoto[] = [];
-      
+
       // Animate capture button
       Animated.sequence([
         Animated.timing(captureAnim, {
@@ -178,37 +174,23 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
         }),
       ]).start();
 
-      console.log('Taking 4 snapshots...');
-      
-      // Take 4 photos with small delay between each
-      for (let i = 0; i < 4; i++) {
-        try {
-          const photo = await camera.current.takePhoto({
-            qualityPrioritization: 'speed',
-            flash: 'off',
-            enableAutoRedEyeReduction: false,
-          });
+      console.log('Taking 1 snapshot...');
 
-          photos.push({
-            path: photo.path,
-            timestamp: Date.now() + i,
-          });
+      try {
+        const photo = await camera.current.takePhoto({
+          qualityPrioritization: 'speed',
+          flash: 'off',
+          enableAutoRedEyeReduction: false,
+        });
 
-          console.log(`Photo ${i + 1}/4 taken:`, photo.path);
-          
-          // Small delay between shots (except for the last one)
-          if (i < 3) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-          }
-        } catch (photoError) {
-          console.error(`Failed to take photo ${i + 1}:`, photoError);
-        }
-      }
+        const capturedPhoto: CapturedPhoto = {
+          path: photo.path,
+          timestamp: Date.now(),
+        };
 
-      if (photos.length > 0) {
-        setCapturedPhotos(photos);
+        setCapturedPhotos([capturedPhoto]);
         setShowPreview(true);
-        
+
         // Animate preview in
         Animated.timing(previewAnim, {
           toValue: 1,
@@ -216,16 +198,327 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
           useNativeDriver: true,
         }).start();
 
-        console.log(`Successfully captured ${photos.length} photos`);
-      } else {
-        Alert.alert('Error', 'No photos were captured');
+        console.log('Successfully captured photo:', photo.path);
+      } catch (photoError) {
+        console.error('Failed to take photo:', photoError);
+        Alert.alert('Error', 'Failed to take photo');
       }
-      
     } catch (error) {
-      console.error('Failed to take pictures:', error);
-      Alert.alert('Error', 'Failed to take pictures');
+      console.error('Failed to take picture:', error);
+      Alert.alert('Error', 'Failed to take picture');
     } finally {
       setIsCapturing(false);
+    }
+  };
+
+  // Convert image to base64
+  const imageToBase64 = async (imagePath: string): Promise<string> => {
+    try {
+      const base64String = await RNFS.readFile(imagePath, 'base64');
+      return base64String;
+    } catch (error) {
+      console.error('Error converting image to base64:', error);
+      throw error;
+    }
+  };
+
+  // Send images to Llama API - use same structure as App.tsx
+  const sendImagesToLlama = async (imagePaths: string[]): Promise<string> => {
+    try {
+      setIsProcessingImages(true);
+      console.log('🚀 Starting image analysis...');
+
+      // Log CONFIG values (without exposing sensitive data)
+      console.log('CONFIG check:', {
+        hasUrl: !!CONFIG.LLAMA_API_URL,
+        hasKey: !!CONFIG.LLAMA_API_KEY,
+        hasModel: !!CONFIG.LLAMA_MODEL,
+        urlLength: CONFIG.LLAMA_API_URL?.length || 0,
+        keyLength: CONFIG.LLAMA_API_KEY?.length || 0,
+      });
+
+      // Validate CONFIG
+      if (!CONFIG.LLAMA_API_URL) {
+        throw new Error('LLAMA_API_URL is not configured in CONFIG');
+      }
+      if (!CONFIG.LLAMA_API_KEY) {
+        throw new Error('LLAMA_API_KEY is not configured in CONFIG');
+      }
+      if (!CONFIG.LLAMA_MODEL) {
+        throw new Error('LLAMA_MODEL is not configured in CONFIG');
+      }
+
+      // Convert image to base64
+      console.log('📷 Converting image to base64...');
+      const base64Images = await Promise.all(
+        imagePaths.map(async (path, index) => {
+          console.log(`Converting image ${index + 1}:`, path);
+          const result = await imageToBase64(path);
+          console.log(
+            `Image ${index + 1} converted, size: ${result.length} chars`,
+          );
+          return result;
+        }),
+      );
+
+      // Prepare message content exactly like App.tsx
+      let messageContent: any;
+
+      if (base64Images.length > 0) {
+        messageContent = [
+          {
+            type: 'text',
+            text: `
+# Foreign Menu Parser System Prompt
+
+You are a specialized menu parsing assistant. When a user uploads an image of a menu with foreign prices, your task is to extract and structure the menu information into a clean JSON format.
+
+## Instructions:
+
+1. **Analyze the uploaded menu image** carefully to identify:
+   - Menu items with their original foreign language names
+   - Prices in the foreign currency
+   - Any descriptions or details about the items
+
+2. **Convert the information** into a JSON structure with the following exact format:
+
+'''json
+{
+  "menu_items": [
+    {
+      "item_name_foreign": "Original name in foreign language",
+      "item_name_english": "Translated name in English",
+      "price_foreign_currency": "Original price with currency symbol",
+      "price_usd": "Converted price in USD"
+    }
+  ],
+  "currency_detected": "Currency code (e.g., EUR, JPY, GBP)",
+  "exchange_rate_used": "Current exchange rate applied",
+  "last_updated": "Current date"
+}
+"""
+
+## Guidelines:
+
+- **Language Detection**: Automatically detect the menu's language and provide accurate English translations
+- **Currency Conversion**: Use current exchange rates to convert prices to USD (round to 2 decimal places)
+- **Item Names**: Preserve the original foreign name exactly as written, and provide clear, appetizing English translations
+- **Price Format**: Include currency symbols and maintain original formatting for foreign prices
+- **Completeness**: Extract ALL visible menu items, don't skip items due to image quality unless completely unreadable
+- **Categories**: If the menu has sections (appetizers, mains, desserts), maintain the order but don't create separate categories in the JSON
+- **Special Characters**: Preserve accent marks and special characters in foreign language names
+- **Descriptions**: If items have descriptions, incorporate key details into the English translation
+
+## Error Handling:
+
+- If text is unclear or unreadable, use "UNCLEAR_TEXT" as a placeholder
+- If currency cannot be detected, ask the user to specify the currency
+- If exchange rates cannot be determined, note this in the response and ask user to specify
+
+## Response Format:
+
+Provide only the clean JSON output without additional commentary, unless clarification is needed about unclear elements in the image.
+            `,
+          },
+          ...base64Images.map(base64Image => ({
+            type: 'image_url',
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          })),
+        ];
+      } else {
+        throw new Error('No images to process');
+      }
+
+      console.log('🌐 Making API call...');
+      console.log('URL:', CONFIG.LLAMA_API_URL);
+      console.log('Model:', CONFIG.LLAMA_MODEL);
+      console.log('Content items:', messageContent.length);
+
+      // Use exact same API call structure as App.tsx
+      // const response = await fetch(CONFIG.LLAMA_API_URL, {
+      const response = await fetch(
+        'https://research.metricle.com/api/v1/llama_hackathon/data',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // Authorization: `Bearer ${CONFIG.LLAMA_API_KEY}`,
+          },
+          body: JSON.stringify({
+            // model: CONFIG.LLAMA_MODEL,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'You are a helpful AI assistant. Provide clear, concise, and accurate responses.',
+              },
+              {
+                role: 'user',
+                content: messageContent,
+              },
+            ],
+            max_tokens: 1000,
+            temperature: 0.7,
+            stream: false,
+          }),
+        },
+      );
+
+      console.log('📡 Response status:', response.status);
+      console.log(
+        '📡 Response headers:',
+        Object.fromEntries(response.headers.entries()),
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error Response:', errorText);
+
+        // Parse error details
+        let errorDetails = `Status: ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.error) {
+            errorDetails += `\nError: ${
+              errorJson.error.message || errorJson.error
+            }`;
+          }
+        } catch (parseError) {
+          errorDetails += `\nRaw response: ${errorText}`;
+        }
+
+        // Provide specific error messages
+        if (response.status === 401) {
+          throw new Error(
+            `Authentication failed. Check your API key.\n\n${errorDetails}`,
+          );
+        } else if (response.status === 429) {
+          throw new Error(
+            `Rate limit exceeded. Try again later.\n\n${errorDetails}`,
+          );
+        } else if (response.status === 400) {
+          throw new Error(
+            `Bad request. Check your model name and request format.\n\n${errorDetails}`,
+          );
+        } else {
+          throw new Error(`API request failed.\n\n${errorDetails}`);
+        }
+      }
+
+      const data = await response.json();
+      console.log('✅ API Response received:', JSON.stringify(data, null, 2));
+
+      // Use exact same response parsing as App.tsx
+      if (data.completion_message?.content?.text) {
+        console.log('Using completion_message format');
+        return data.completion_message.content.text.trim();
+      } else if (
+        data.choices &&
+        data.choices.length > 0 &&
+        data.choices[0].message
+      ) {
+        console.log('Using OpenAI choices format');
+        return data.choices[0].message.content.trim();
+      } else {
+        console.error('❌ Unexpected response format:', data);
+        throw new Error(
+          `Invalid response format from Llama API.\n\nResponse: ${JSON.stringify(
+            data,
+            null,
+            2,
+          )}`,
+        );
+      }
+    } catch (error) {
+      console.error('💥 Error in sendImagesToLlama:', error);
+
+      // Enhanced error handling
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(
+          `Network error. Check your internet connection.\n\nDetails: ${error.message}`,
+        );
+      } else if (error.message.includes('CONFIG')) {
+        throw new Error(
+          `Configuration error: ${error.message}\n\nPlease check your rtcConfig.ts file.`,
+        );
+      } else {
+        throw error;
+      }
+    } finally {
+      setIsProcessingImages(false);
+    }
+  };
+
+  // Process captured photo and send to Llama - updated to handle menu data
+  const processAndSendImages = async () => {
+    if (capturedPhotos.length === 0) {
+      Alert.alert('Error', 'No photo to process');
+      return;
+    }
+
+    try {
+      const imagePaths = capturedPhotos.map(photo => photo.path);
+      console.log('🎯 Processing image:', imagePaths[0]);
+
+      const llamaResponse = await sendImagesToLlama(imagePaths);
+      console.log('✅ Received Llama response:', llamaResponse);
+
+      // Try to parse the response as JSON (for menu data)
+      let isMenuData = false;
+      let parsedMenuData = null;
+
+      try {
+        // Check if response contains JSON
+        const jsonMatch = llamaResponse.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          parsedMenuData = JSON.parse(jsonMatch[1]);
+          if (
+            parsedMenuData.menu_items &&
+            Array.isArray(parsedMenuData.menu_items)
+          ) {
+            isMenuData = true;
+          }
+        }
+      } catch (parseError) {
+        console.log('Response is not JSON menu data, treating as regular text');
+      }
+
+      if (isMenuData && parsedMenuData) {
+        // Add menu data as external query with the parsed JSON
+        addMessage(
+          '📋 Menu Analysis Complete',
+          false,
+          'external_query',
+          {
+            data: parsedMenuData,
+            queryType: 'restaurant',
+          },
+          false,
+        );
+      } else {
+        // Add regular text response with markdown support
+        addMessage(llamaResponse, false, 'text', undefined, true);
+      }
+
+      // Show success and navigate back
+      Alert.alert('Success', 'Image analyzed successfully!', [
+        {
+          text: 'OK',
+          onPress: () => {
+            clearPhotos();
+            navigation.goBack();
+          },
+        },
+      ]);
+    } catch (error) {
+      console.error('💥 Error processing image:', error);
+
+      // Show the actual error message
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      Alert.alert('Image Analysis Failed', errorMessage);
     }
   };
 
@@ -311,7 +604,7 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
         {/* Bottom Camera Controls */}
         {!showPreview && (
           <View style={styles.bottomCameraControls}>
-            {/* Capture Button */}
+            {/* Capture Button - updated text */}
             <Animated.View
               style={[
                 styles.captureButtonContainer,
@@ -329,14 +622,12 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
                 {isCapturing ? (
                   <View style={styles.capturingContainer}>
                     <ActivityIndicator size="small" color="white" />
-                    <Text style={styles.capturingText}>
-                      {capturedPhotos.length}/4
-                    </Text>
+                    <Text style={styles.capturingText}>Capturing...</Text>
                   </View>
                 ) : (
                   <View style={styles.captureIconContainer}>
                     <Ionicons name="camera" size={32} color="white" />
-                    <Text style={styles.captureText}>4 Shots</Text>
+                    <Text style={styles.captureText}>Capture</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -344,7 +635,7 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
           </View>
         )}
 
-        {/* Photo Preview Overlay */}
+        {/* Photo Preview Overlay - updated for single photo */}
         {showPreview && (
           <Animated.View
             style={[
@@ -362,9 +653,7 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
               },
             ]}>
             <View style={styles.previewHeader}>
-              <Text style={styles.previewTitle}>
-                Captured {capturedPhotos.length} Photos
-              </Text>
+              <Text style={styles.previewTitle}>Photo Captured</Text>
               <TouchableOpacity
                 style={styles.closePreviewButton}
                 onPress={closePreview}>
@@ -372,36 +661,52 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.photoScroll}
-              contentContainerStyle={styles.photoScrollContent}>
-              {capturedPhotos.map((photo, index) => (
-                <View key={photo.timestamp} style={styles.photoContainer}>
-                  <Image
-                    source={{uri: `file://${photo.path}`}}
-                    style={styles.previewImage}
-                    resizeMode="cover"
-                  />
-                  <Text style={styles.photoIndex}>{index + 1}</Text>
-                </View>
-              ))}
-            </ScrollView>
+            <View style={styles.singlePhotoContainer}>
+              {capturedPhotos.length > 0 && (
+                <Image
+                  source={{uri: `file://${capturedPhotos[0].path}`}}
+                  style={styles.singlePreviewImage}
+                  resizeMode="cover"
+                />
+              )}
+            </View>
 
             <View style={styles.previewActions}>
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={clearPhotos}>
+                onPress={clearPhotos}
+                disabled={isProcessingImages}>
                 <Ionicons name="trash" size={20} color="white" />
-                <Text style={styles.actionText}>Clear All</Text>
+                <Text style={styles.actionText}>Delete</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.actionButton, styles.retakeButton]}
-                onPress={closePreview}>
+                onPress={closePreview}
+                disabled={isProcessingImages}>
                 <Ionicons name="camera" size={20} color="white" />
-                <Text style={styles.actionText}>Take More</Text>
+                <Text style={styles.actionText}>Retake</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  styles.sendButton,
+                  isProcessingImages && styles.sendButtonDisabled,
+                ]}
+                onPress={processAndSendImages}
+                disabled={isProcessingImages}>
+                {isProcessingImages ? (
+                  <>
+                    <ActivityIndicator size="small" color="white" />
+                    <Text style={styles.actionText}>Processing...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="send" size={20} color="white" />
+                    <Text style={styles.actionText}>Analyze</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </Animated.View>
@@ -531,59 +836,53 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 8,
   },
-  photoScroll: {
+  singlePhotoContainer: {
     flex: 1,
-  },
-  photoScrollContent: {
-    paddingHorizontal: 20,
-    alignItems: 'center',
     justifyContent: 'center',
-  },
-  photoContainer: {
-    marginHorizontal: 10,
     alignItems: 'center',
+    paddingHorizontal: 20,
   },
-  previewImage: {
-    width: width * 0.7,
-    height: height * 0.5,
+  singlePreviewImage: {
+    width: width * 0.85,
+    height: height * 0.6,
     borderRadius: 10,
     borderWidth: 2,
     borderColor: 'white',
   },
-  photoIndex: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginTop: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
   previewActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingHorizontal: 40,
+    paddingHorizontal: 20, // Reduced padding to fit 3 buttons
     paddingBottom: 50,
     paddingTop: 20,
   },
   actionButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16, // Reduced padding
     paddingVertical: 12,
     borderRadius: 20,
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+    justifyContent: 'center',
   },
   retakeButton: {
     backgroundColor: 'rgba(0, 122, 255, 0.8)',
   },
+  sendButton: {
+    backgroundColor: 'rgba(52, 199, 89, 0.8)',
+  },
+  sendButtonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
   actionText: {
     color: 'white',
-    fontSize: 14,
+    fontSize: 12, // Slightly smaller text
     fontWeight: '600',
-    marginLeft: 8,
+    marginLeft: 6, // Reduced margin
   },
+
   bottomControls: {
     position: 'absolute',
     bottom: 200,

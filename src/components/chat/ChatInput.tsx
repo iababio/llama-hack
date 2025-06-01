@@ -7,15 +7,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  KeyboardAvoidingView,
   Animated,
   Keyboard,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {IsDarkMode} from '../../utils/config';
 import {ATTACHMENT_SHEET_HEIGHT} from './styles';
-import AttachmentSheet from './AttachmentSheet';
 
 interface ChatInputProps {
   inputText: string;
@@ -43,7 +40,6 @@ const ChatInput = ({
   scrollToEnd,
 }: ChatInputProps) => {
   const isDark = IsDarkMode();
-  const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const translateY = useRef(
@@ -99,7 +95,8 @@ const ChatInput = ({
 
   return (
     <View style={[styles.keyboardContainer, {bottom: keyboardHeight}]}>
-      <View style={[styles.inputWrapper, isDark && {backgroundColor: '#2C2C2E'}]}>
+      <View
+        style={[styles.inputWrapper, isDark && {backgroundColor: '#2C2C2E'}]}>
         {/* Attachment Button */}
         <TouchableOpacity
           style={styles.attachButton}

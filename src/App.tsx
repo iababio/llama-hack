@@ -1,5 +1,15 @@
 import React, {useState, useRef, useEffect} from 'react';
-import {View, Text, StyleSheet, FlatList, Alert, Animated} from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Alert,
+  Animated,
+  TouchableOpacity,
+  Clipboard, // Add this import
+  Vibration, // Add this import
+} from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {RTCPeerConnection} from 'react-native-webrtc';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -18,7 +28,6 @@ import {
 } from './functions';
 import RTCDataChannel from 'react-native-webrtc/lib/typescript/RTCDataChannel';
 import {CONFIG} from './utils/rtcConfig';
-
 
 interface Message {
   id: string;
@@ -59,9 +68,34 @@ const App = ({navigation}) => {
   const flatListRef = useRef<FlatList>(null);
 
   // Call Llama API
-  const callLlamaAPI = async (userMessage: string): Promise<string> => {
+  const callLlamaAPI = async (
+    userMessage: string,
+    images?: string[],
+  ): Promise<string> => {
     try {
       setIsLoadingLlama(true);
+
+      // Prepare message content
+      let messageContent: any;
+
+      if (images && images.length > 0) {
+        // Handle image messages
+        messageContent = [
+          {
+            type: 'text',
+            text: userMessage,
+          },
+          ...images.map(base64Image => ({
+            type: 'image_url',
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          })),
+        ];
+      } else {
+        // Handle text-only messages
+        messageContent = userMessage;
+      }
 
       const response = await fetch(CONFIG.LLAMA_API_URL, {
         method: 'POST',
@@ -74,11 +108,12 @@ const App = ({navigation}) => {
           messages: [
             {
               role: 'system',
-              content: 'You are a helpful AI assistant. Provide clear, concise, and accurate responses.',
+              content:
+                'You are a helpful AI assistant. Provide clear, concise, and accurate responses.',
             },
             {
               role: 'user',
-              content: userMessage,
+              content: messageContent,
             },
           ],
           max_tokens: 1000,
@@ -90,7 +125,7 @@ const App = ({navigation}) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Llama API Error:', response.status, errorText);
-        
+
         // Provide more specific error messages
         if (response.status === 401) {
           throw new Error('Authentication failed. Please check your API key.');
@@ -105,11 +140,15 @@ const App = ({navigation}) => {
 
       const data = await response.json();
       console.log('Llama API Response:', data); // Debug log
-      
+
       // Handle Llama's response format
       if (data.completion_message?.content?.text) {
         return data.completion_message.content.text.trim();
-      } else if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+      } else if (
+        data.choices &&
+        data.choices.length > 0 &&
+        data.choices[0].message
+      ) {
         // Fallback for OpenAI-compatible format
         return data.choices[0].message.content.trim();
       } else {
@@ -118,10 +157,12 @@ const App = ({navigation}) => {
       }
     } catch (error) {
       console.error('Error calling Llama API:', error);
-      
+
       // Re-throw with user-friendly message
       if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error('Network error. Please check your internet connection.');
+        throw new Error(
+          'Network error. Please check your internet connection.',
+        );
       } else {
         throw error;
       }
@@ -220,7 +261,283 @@ const App = ({navigation}) => {
     }, 100);
   };
 
-  // Handle text message send with Llama integration only
+  // Enhanced order state to track conversation flow and persist selected items
+  const [orderState, setOrderState] = useState<{
+    selectedItems?: any[];
+    awaitingResponse?: boolean;
+    userResponses?: string[];
+    lastSelectedItems?: any[]; // Add this to remember last selection
+  }>({});
+
+  // Function to check if message contains order keywords
+  const containsOrderKeywords = (message: string): boolean => {
+    const orderKeywords = [
+      'order for me',
+      'order selected food',
+      'order selected',
+      'place order',
+      'i want to order',
+      'order these',
+      'order this',
+      'place my order',
+      'order food',
+      'make order',
+      'place an order',
+    ];
+
+    const messageLower = message.toLowerCase();
+    return orderKeywords.some(keyword => messageLower.includes(keyword));
+  };
+
+  // Function to detect if user is providing allergy/customization information
+  const isOrderResponseMessage = (message: string): boolean => {
+    const responseKeywords = [
+      'no allergies',
+      'allergic to',
+      'i have allergy',
+      'dietary restriction',
+      'vegetarian',
+      'vegan',
+      'gluten free',
+      'no customization',
+      'extra',
+      'no onions',
+      'spicy',
+      'mild',
+      'sauce on side',
+      'well done',
+      'medium rare',
+      'no dairy',
+      'nut allergy',
+      'shellfish allergy',
+      'proceed with order',
+      'place the order',
+      'ready to order',
+      'no allergic',
+      'no special requests',
+      'everything is fine',
+      'proceed',
+      'continue',
+    ];
+
+    const messageLower = message.toLowerCase();
+    return responseKeywords.some(keyword => messageLower.includes(keyword));
+  };
+
+  // Function to check if user wants to finalize order with no allergies
+  const isNoAllergiesResponse = (message: string): boolean => {
+    const noAllergiesKeywords = [
+      'no allergies',
+      'no allergy',
+      'no allergic',
+      'no dietary restriction',
+      'no special requests',
+      'no customization',
+      'proceed with order',
+      'place the order',
+      'ready to order',
+      'everything is fine',
+      'looks good',
+      'proceed',
+      'continue',
+    ];
+
+    const messageLower = message.toLowerCase();
+    return noAllergiesKeywords.some(keyword => messageLower.includes(keyword));
+  };
+
+  // Generate cooking instructions based on user preferences
+  const generateCookingInstructions = async (
+    selectedItems: any[],
+    userPreferences: string,
+  ): Promise<string> => {
+    try {
+      const dishesInfo = selectedItems
+        .map((item, index) => {
+          return `${index + 1}. ${item.item_name_english} (${
+            item.item_name_foreign
+          }) - $${item.price_usd}`;
+        })
+        .join('\n');
+
+      const prompt = `Based on the customer's order and preferences, create detailed step-by-step cooking/preparation instructions for the chef and serving instructions for the waiter.
+
+CUSTOMER ORDER:
+${dishesInfo}
+
+CUSTOMER PREFERENCES & ALLERGIES:
+${userPreferences}
+
+Please provide:
+
+1. **CHEF INSTRUCTIONS** (Kitchen Preparation):
+   - Step-by-step cooking instructions in English
+   - Special allergy precautions and cross-contamination prevention
+   - Customization modifications for each dish
+   - Cooking time and temperature adjustments if needed
+
+2. **CHEF INSTRUCTIONS** (Native Language):
+   - Same instructions translated to the restaurant's native language (infer from dish names)
+
+3. **WAITER INSTRUCTIONS**:
+   - How to serve the dishes
+   - What to tell the customer about modifications
+   - Allergy warnings to communicate
+   - Order presentation notes
+
+4. **ORDER SUMMARY**:
+   - Final order with all modifications
+   - Total estimated preparation time
+   - Special handling notes
+
+Format with clear sections, bullet points, and both English and native language instructions for the kitchen staff.`;
+
+      const response = await fetch(CONFIG.LLAMA_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.LLAMA_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: CONFIG.LLAMA_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                "You are a professional restaurant operations assistant. Create detailed, clear instructions for kitchen staff and waiters. Always include allergy precautions and translate kitchen instructions to the restaurant's native language. Be thorough and safety-focused.",
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+          max_tokens: 2000,
+          temperature: 0.3,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const responseData = await response.json();
+
+      let instructions = '';
+      if (responseData.completion_message?.content?.text) {
+        instructions = responseData.completion_message.content.text.trim();
+      } else if (
+        responseData.choices &&
+        responseData.choices.length > 0 &&
+        responseData.choices[0].message
+      ) {
+        instructions = responseData.choices[0].message.content.trim();
+      } else {
+        throw new Error('Invalid response format from Llama API');
+      }
+
+      return instructions;
+    } catch (error) {
+      console.error('Error generating cooking instructions:', error);
+      throw error;
+    }
+  };
+
+  // Centralized order handling function
+  const handleOrderRequest = async (
+    selectedItems?: any[],
+    userMessage?: string,
+  ) => {
+    try {
+      // Show processing message
+      addMessage(
+        '🛒 I can help you place an order! Let me ask you a few questions first...',
+        false,
+        'text',
+      );
+
+      let orderPrompt = '';
+      let itemsToUse = selectedItems;
+
+      // If no items provided but we have last selected items, use those
+      if (
+        !itemsToUse &&
+        orderState.lastSelectedItems &&
+        orderState.lastSelectedItems.length > 0
+      ) {
+        itemsToUse = orderState.lastSelectedItems;
+        console.log('🔄 Using previously selected items:', itemsToUse);
+      }
+
+      if (itemsToUse && itemsToUse.length > 0) {
+        // Handle order from menu card with selected items
+        setOrderState({
+          selectedItems: itemsToUse,
+          lastSelectedItems: itemsToUse, // Always remember the last selection
+          awaitingResponse: true,
+          userResponses: [],
+        });
+
+        const dishesInfo = itemsToUse
+          .map((item, index) => {
+            return `${index + 1}. ${item.item_name_english} (${
+              item.item_name_foreign
+            }) - $${item.price_usd}`;
+          })
+          .join('\n');
+
+        orderPrompt = `The user wants to order the following dishes from a restaurant menu:
+
+${dishesInfo}
+
+Before placing this order, I need to ask important questions about:
+
+1. **Food Allergies & Dietary Restrictions**: Do you have any allergies to nuts, dairy, gluten, shellfish, or any other ingredients? Are you vegetarian, vegan, or have any other dietary preferences?
+
+2. **Customizations & Preferences**: Would you like any modifications to these dishes? (Examples: spice level, extra toppings, sauce on the side, no onions, etc.)
+
+3. **Special Preparation**: Any special cooking instructions or notes for the kitchen?
+
+Please ask these questions in a friendly, conversational way and wait for their responses before proceeding with the order.`;
+      } else if (userMessage) {
+        // Handle general order request from text input - ask to select dishes first
+        setOrderState({
+          awaitingResponse: true,
+          userResponses: [],
+        });
+
+        orderPrompt = `The user wants to place an order and said: "${userMessage}"
+
+Since they haven't selected specific dishes yet, please help them by:
+
+1. **Menu Selection**: First, let them know they need to select dishes from the menu. Ask them to browse the available menu items and select what they'd like to order.
+
+2. **Food Allergies & Dietary Restrictions**: Also ask if they have any allergies to nuts, dairy, gluten, shellfish, or any other ingredients. Ask about dietary preferences (vegetarian, vegan, etc.)
+
+3. **Next Steps**: Let them know that once they select dishes from the menu, you'll help them customize their order.
+
+Be friendly and guide them through the ordering process step by step.`;
+      }
+
+      // Call Llama API for order assistance
+      const llamaResponse = await callLlamaAPI(orderPrompt);
+
+      // Remove the processing message and add the actual response
+      setMessages(prev => prev.slice(0, -1));
+      addMessage(llamaResponse, false, 'text', undefined, true);
+    } catch (error) {
+      console.error('Error handling order request:', error);
+      // Remove processing message
+      setMessages(prev => prev.slice(0, -1));
+      addMessage(
+        '❌ Sorry, I encountered an error processing your order request. Please try again.',
+        false,
+        'text',
+      );
+    }
+  };
+
+  // Enhanced handleSend to detect order responses and keywords
   const handleSend = async () => {
     if (!inputText.trim()) return;
 
@@ -230,8 +547,122 @@ const App = ({navigation}) => {
     addMessage(messageText, true, 'text');
     setInputText('');
 
+    // Check if we're waiting for order responses and this looks like a response
+    if (orderState.awaitingResponse && isOrderResponseMessage(messageText)) {
+      try {
+        // Store the user's response
+        const updatedResponses = [
+          ...(orderState.userResponses || []),
+          messageText,
+        ];
+        setOrderState(prev => ({
+          ...prev,
+          userResponses: updatedResponses,
+        }));
+
+        // Check if user indicated no allergies and we should proceed with order
+        if (
+          isNoAllergiesResponse(messageText) &&
+          orderState.selectedItems &&
+          orderState.selectedItems.length > 0
+        ) {
+          // Show processing message
+          addMessage(
+            '👨‍🍳 Perfect! Creating detailed instructions for the chef and waiter...',
+            false,
+            'text',
+          );
+
+          // Combine all user responses
+          const allPreferences = updatedResponses.join('\n\n');
+
+          // Generate cooking instructions
+          const cookingInstructions = await generateCookingInstructions(
+            orderState.selectedItems,
+            allPreferences,
+          );
+
+          // Remove processing message
+          setMessages(prev => prev.slice(0, -1));
+
+          // Add the cooking instructions
+          addMessage(
+            `## 👨‍🍳 **ORDER PROCESSING COMPLETE**\n\n${cookingInstructions}`,
+            false,
+            'text',
+            undefined,
+            true,
+          );
+
+          // Keep the selected items in case user wants to modify later
+          setOrderState(prev => ({
+            ...prev,
+            awaitingResponse: false,
+          }));
+        } else if (orderState.selectedItems && updatedResponses.length > 0) {
+          // If user provided specific allergies/customizations, still generate instructions
+          // Show processing message
+          addMessage(
+            '👨‍🍳 Thank you for the details! Creating customized instructions for the chef and waiter...',
+            false,
+            'text',
+          );
+
+          // Combine all user responses
+          const allPreferences = updatedResponses.join('\n\n');
+
+          // Generate cooking instructions
+          const cookingInstructions = await generateCookingInstructions(
+            orderState.selectedItems,
+            allPreferences,
+          );
+
+          // Remove processing message
+          setMessages(prev => prev.slice(0, -1));
+
+          // Add the cooking instructions
+          addMessage(
+            `## 👨‍🍳 **ORDER PROCESSING COMPLETE**\n\n${cookingInstructions}`,
+            false,
+            'text',
+            undefined,
+            true,
+          );
+
+          // Keep the selected items in case user wants to modify later
+          setOrderState(prev => ({
+            ...prev,
+            awaitingResponse: false,
+          }));
+        } else {
+          // Continue asking questions or provide acknowledgment
+          const followUpPrompt = `The user responded to our order questions with: "${messageText}"
+
+Based on their response and the conversation context, either:
+1. Ask any follow-up questions needed to complete their order
+2. If you have enough information, let them know we'll prepare their order instructions
+
+Be conversational and ensure we have all necessary allergy and customization information.`;
+
+          const followUpResponse = await callLlamaAPI(followUpPrompt);
+          addMessage(followUpResponse, false, 'text', undefined, true);
+        }
+      } catch (error) {
+        console.error('Error processing order response:', error);
+        addMessage(
+          '❌ Sorry, I encountered an error processing your order details. Please try again.',
+          false,
+          'text',
+        );
+      }
+    }
+    // Check if the message contains order keywords
+    else if (containsOrderKeywords(messageText)) {
+      console.log('🛒 Order keywords detected:', messageText);
+      await handleOrderRequest(undefined, messageText);
+    }
     // Check if the message contains external query keywords
-    if (containsExternalQueryKeywords(messageText)) {
+    else if (containsExternalQueryKeywords(messageText)) {
       try {
         // Show loading message
         addMessage('🔍 Looking that up for you...', false, 'text');
@@ -268,27 +699,26 @@ const App = ({navigation}) => {
         );
       }
     } else {
-      // Use Llama API for normal text chat (no WebRTC fallback)
+      // Use Llama API for normal text chat
       try {
         // Show loading indicator
         addMessage('🦙 Llama is thinking...', false, 'text');
 
         // Call Llama API
         const llamaResponse = await callLlamaAPI(messageText);
-        
+
         // Remove loading message
         setMessages(prev => prev.slice(0, -1));
-        
+
         // Add Llama response with markdown support
         addMessage(llamaResponse, false, 'text', undefined, true);
-        
       } catch (error) {
         console.error('Error calling Llama API:', error);
-        
+
         // Remove loading message
         setMessages(prev => prev.slice(0, -1));
-        
-        // Show error message (no WebRTC fallback)
+
+        // Show error message
         addMessage(
           '❌ Sorry, I encountered an error processing your message. Please try again.',
           false,
@@ -389,7 +819,95 @@ const App = ({navigation}) => {
     setAttachmentSheetVisible(prev => !prev);
   };
 
-  // Render message item with markdown support
+  // Copy message to clipboard
+  const copyMessageToClipboard = (message: Message) => {
+    // Vibrate to provide haptic feedback
+    Vibration.vibrate(50);
+
+    let textToCopy = message.text;
+
+    // For external query messages, include additional data if available
+    if (message.type === 'external_query' && message.externalData) {
+      const {data, queryType} = message.externalData;
+
+      // Add structured data to copied text
+      textToCopy += '\n\n--- Additional Data ---\n';
+      textToCopy += `Query Type: ${queryType}\n`;
+
+      if (data && typeof data === 'object') {
+        // Format the data nicely
+        try {
+          if (Array.isArray(data)) {
+            data.forEach((item, index) => {
+              textToCopy += `\n${index + 1}. `;
+              if (typeof item === 'object') {
+                Object.entries(item).forEach(([key, value]) => {
+                  textToCopy += `${key}: ${value}, `;
+                });
+              } else {
+                textToCopy += item;
+              }
+            });
+          } else {
+            Object.entries(data).forEach(([key, value]) => {
+              textToCopy += `${key}: ${value}\n`;
+            });
+          }
+        } catch (error) {
+          textToCopy += JSON.stringify(data, null, 2);
+        }
+      }
+    }
+
+    // Copy to clipboard
+    Clipboard.setString(textToCopy);
+
+    // Show confirmation
+    Alert.alert(
+      'Copied!',
+      'Message copied to clipboard',
+      [{text: 'OK', style: 'default'}],
+      {cancelable: true},
+    );
+  };
+
+  // Show message options menu
+  const showMessageOptions = (message: Message) => {
+    const options = [
+      {
+        text: 'Copy Message',
+        onPress: () => copyMessageToClipboard(message),
+      },
+    ];
+
+    // Add additional options for external query messages
+    if (message.type === 'external_query' && message.externalData) {
+      options.push({
+        text: 'Copy Data Only',
+        onPress: () => {
+          Vibration.vibrate(50);
+          const dataText = JSON.stringify(message.externalData.data, null, 2);
+          Clipboard.setString(dataText);
+          Alert.alert('Copied!', 'Data copied to clipboard');
+        },
+      });
+    }
+
+    options.push({
+      text: 'Cancel',
+      style: 'cancel',
+    });
+
+    Alert.alert(
+      'Message Options',
+      `${
+        message.isUser ? 'Your' : 'AI'
+      } message from ${message.timestamp.toLocaleTimeString()}`,
+      options,
+    );
+  };
+
+  // Render message item with markdown support and long press
   const renderMessage = ({item}: {item: Message}) => {
     // Add debugging to see what data we have
     console.log('Rendering message:', {
@@ -402,8 +920,12 @@ const App = ({navigation}) => {
     if (item.type === 'external_query') {
       return (
         <View style={styles.externalQueryContainer}>
-          {/* Text message part */}
-          <View style={[styles.messageContainer, styles.aiMessage]}>
+          {/* Text message part with long press */}
+          <TouchableOpacity
+            style={[styles.messageContainer, styles.aiMessage]}
+            onLongPress={() => showMessageOptions(item)}
+            delayLongPress={500}
+            activeOpacity={0.8}>
             {item.isMarkdown ? (
               <Markdown style={markdownStyles}>{item.text}</Markdown>
             ) : (
@@ -417,7 +939,7 @@ const App = ({navigation}) => {
                 minute: '2-digit',
               })}
             </Text>
-          </View>
+          </TouchableOpacity>
 
           {/* External query cards part */}
           {item.externalData && (
@@ -425,6 +947,31 @@ const App = ({navigation}) => {
               <ExternalQueryCard
                 data={item.externalData.data}
                 queryType={item.externalData.queryType}
+                onMoreDetails={(response: string) => {
+                  // Add the response as a new AI message with proper formatting
+                  addMessage(
+                    response,
+                    false,
+                    'text',
+                    undefined,
+                    true, // Enable markdown for proper formatting
+                  );
+                }}
+                onOrderSelected={(selectedItems: any[]) => {
+                  // Handle order from menu card - use the centralized function
+                  console.log(
+                    '🛒 Order Selected button clicked with items:',
+                    selectedItems,
+                  );
+
+                  // Store selected items for future reference
+                  setOrderState(prev => ({
+                    ...prev,
+                    lastSelectedItems: selectedItems,
+                  }));
+
+                  handleOrderRequest(selectedItems);
+                }}
               />
             </View>
           )}
@@ -432,13 +979,16 @@ const App = ({navigation}) => {
       );
     }
 
-    // Regular message rendering
+    // Regular message rendering with long press
     return (
-      <View
+      <TouchableOpacity
         style={[
           styles.messageContainer,
           item.isUser ? styles.userMessage : styles.aiMessage,
-        ]}>
+        ]}
+        onLongPress={() => showMessageOptions(item)}
+        delayLongPress={500}
+        activeOpacity={0.8}>
         {/* Render markdown content for AI responses or regular text for user messages */}
         {item.isMarkdown && !item.isUser ? (
           <Markdown style={markdownStyles}>{item.text}</Markdown>
@@ -458,7 +1008,7 @@ const App = ({navigation}) => {
             minute: '2-digit',
           })}
         </Text>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -617,6 +1167,15 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: 'flex-start',
     flex: 0,
+    // Add subtle shadow for better touch feedback
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   userMessage: {
     alignSelf: 'flex-end',
