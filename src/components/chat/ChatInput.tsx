@@ -2,7 +2,7 @@
 import React, {useRef, useEffect, useState} from 'react';
 import {
   View,
-  Text, // Add this import
+  Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -22,9 +22,11 @@ interface ChatInputProps {
   handleVoiceLongPress?: () => void;
   handleAttachmentPress: () => void;
   onAttachmentOption?: (option: string) => void;
+  onClearMessages?: () => void; // Add this prop
   isRecording: boolean;
   attachmentSheetVisible: boolean;
   scrollToEnd: () => void;
+  hasMessages?: boolean; // Add this prop to show/hide clear option
 }
 
 const ChatInput = ({
@@ -35,9 +37,11 @@ const ChatInput = ({
   handleVoiceLongPress,
   handleAttachmentPress,
   onAttachmentOption,
+  onClearMessages,
   isRecording,
   attachmentSheetVisible,
   scrollToEnd,
+  hasMessages = false,
 }: ChatInputProps) => {
   const isDark = IsDarkMode();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -180,28 +184,6 @@ const ChatInput = ({
 
           <TouchableOpacity
             style={styles.attachmentOption}
-            onPress={() => onAttachmentOption?.('gallery')}>
-            <View style={[styles.attachmentIcon, {backgroundColor: '#007AFF'}]}>
-              <Ionicons name="images" size={24} color="white" />
-            </View>
-            <Text style={[styles.attachmentText, isDark && {color: '#FFFFFF'}]}>
-              Gallery
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.attachmentOption}
-            onPress={() => onAttachmentOption?.('document')}>
-            <View style={[styles.attachmentIcon, {backgroundColor: '#34C759'}]}>
-              <Ionicons name="document" size={24} color="white" />
-            </View>
-            <Text style={[styles.attachmentText, isDark && {color: '#FFFFFF'}]}>
-              Document
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.attachmentOption}
             onPress={() => onAttachmentOption?.('location')}>
             <View style={[styles.attachmentIcon, {backgroundColor: '#FF3B30'}]}>
               <Ionicons name="location" size={24} color="white" />
@@ -210,6 +192,28 @@ const ChatInput = ({
               Location
             </Text>
           </TouchableOpacity>
+
+          {/* Clear Messages Option - Only show if there are messages */}
+          {hasMessages && onClearMessages && (
+            <TouchableOpacity
+              style={styles.attachmentOption}
+              onPress={() => {
+                onClearMessages();
+                // Close attachment sheet after clearing
+                setTimeout(() => {
+                  handleAttachmentPress();
+                }, 100);
+              }}>
+              <View
+                style={[styles.attachmentIcon, {backgroundColor: '#FF3B30'}]}>
+                <Ionicons name="trash" size={24} color="white" />
+              </View>
+              <Text
+                style={[styles.attachmentText, isDark && {color: '#FFFFFF'}]}>
+                Clear All
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </Animated.View>
     </View>
@@ -269,7 +273,6 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#C7C7CC',
   },
-  // Add missing attachment sheet styles
   attachmentSheet: {
     position: 'absolute',
     bottom: 0,
@@ -293,11 +296,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingHorizontal: 20,
+    flexWrap: 'wrap',
   },
   attachmentOption: {
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
+    width: '18%', // Adjusted to fit 5 items
+    marginVertical: 5,
   },
   attachmentIcon: {
     width: 50,

@@ -38,39 +38,85 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
   // Get WebRTC state and handlers from route params
   const webRTCState = route?.params?.webRTCState || {};
   const webRTCHandlers = route?.params?.webRTCHandlers || {};
+  const autoVisionMode = route?.params?.autoVisionMode || false; // New flag
 
-  const {
-    connectStatus = 'notConnect',
-  } = webRTCState;
+  const {connectStatus = 'notConnect', dataChannel} = webRTCState;
 
   const {handleOpenAIEvent = () => {}, addMessage = () => {}} = webRTCHandlers;
 
-  // Camera states
+  // Camera states - ALL useState hooks must be at the top
   const [hasPermission, setHasPermission] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [outputText, setOutputText] = useState('');
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhotos, setCapturedPhotos] = useState<CapturedPhoto[]>([]);
   const [showPreview, setShowPreview] = useState(false);
-  const [isProcessingImages, setIsProcessingImages] = useState(false); // Add new state for processing
-  const currentLabel = useSharedValue('');
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
+  const [isAutoVisionProcessing, setIsAutoVisionProcessing] = useState(false);
 
-  // Animation states
+  // ALL useRef hooks must be together
+  const camera = useRef<Camera>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
   const captureAnim = useRef(new Animated.Value(1)).current;
   const previewAnim = useRef(new Animated.Value(0)).current;
 
+  // Shared values
+  const currentLabel = useSharedValue('');
+
+  // Camera devices
   const devices = useCameraDevices();
   const device = devices.back || devices.front || Object.values(devices)[0];
-  const camera = useRef<Camera>(null);
 
-  // Handle back button press
-  const handleBackPress = () => {
-    navigation?.goBack();
-  };
+  // Frame processor
+  const frameProcessor = useFrameProcessor(
+    frame => {
+      'worklet';
 
-  // Start animations based on connection status
+      try {
+        // Simulate a label detection process
+        const labels = [
+          'Object detected',
+          'Motion detected',
+          'Frame processed',
+        ];
+        const randomLabel = labels[Math.floor(Math.random() * labels.length)];
+
+        // Update the shared value with the detected label
+        currentLabel.value = randomLabel;
+      } catch (error) {
+        console.log('Frame processor error:', error);
+      }
+    },
+    [currentLabel],
+  );
+
+  // ALL useEffect hooks must be together and not conditional
+  // 1. Permission request effect
+  useEffect(() => {
+    const requestPermissions = async () => {
+      try {
+        console.log('Requesting camera permission...');
+        const cameraPermission = await Camera.requestCameraPermission();
+        console.log('Camera permission result:', cameraPermission);
+
+        console.log('Requesting microphone permission...');
+        const microphonePermission = await Camera.requestMicrophonePermission();
+        console.log('Microphone permission result:', microphonePermission);
+
+        setHasPermission(cameraPermission === 'granted');
+      } catch (error) {
+        console.error('Permission request failed:', error);
+        setHasPermission(false);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    requestPermissions();
+  }, []);
+
+  // 2. Animation effect for connection status
   useEffect(() => {
     if (connectStatus === 'connecting') {
       Animated.loop(
@@ -106,50 +152,265 @@ export default function CameraScreen({navigation, route}: CameraScreenProps) {
     }
   }, [connectStatus, pulseAnim, rotateAnim]);
 
+  // 3. Auto-vision mode effect - MOVED here to maintain hook order
   useEffect(() => {
-    const requestPermissions = async () => {
-      try {
-        console.log('Requesting camera permission...');
-        const cameraPermission = await Camera.requestCameraPermission();
-        console.log('Camera permission result:', cameraPermission);
+    if (
+      autoVisionMode &&
+      device &&
+      hasPermission &&
+      !isLoading &&
+      camera.current &&
+      !isAutoVisionProcessing
+    ) {
+      console.log(
+        '🥽 Auto vision mode detected - taking snapshot in 2 seconds...',
+      );
 
-        console.log('Requesting microphone permission...');
-        const microphonePermission = await Camera.requestMicrophonePermission();
-        console.log('Microphone permission result:', microphonePermission);
+      // Give camera a moment to initialize, then take snapshot
+      const timer = setTimeout(() => {
+        handleAutoVisionSnapshot();
+      }, 2000);
 
-        setHasPermission(cameraPermission === 'granted');
-      } catch (error) {
-        console.error('Permission request failed:', error);
-        setHasPermission(false);
-      } finally {
-        setIsLoading(false);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    autoVisionMode,
+    device,
+    hasPermission,
+    isLoading,
+    isAutoVisionProcessing,
+  ]);
+
+  // Handle back button press
+  const handleBackPress = () => {
+    navigation?.goBack();
+  };
+
+  // Handle automatic vision snapshot
+  const handleAutoVisionSnapshot = async () => {
+    if (!camera.current || isAutoVisionProcessing) {
+      return;
+    }
+
+    try {
+      setIsAutoVisionProcessing(true);
+      console.log('📸 Taking automatic snapshot for vision analysis...');
+
+      // Add message to chat indicating vision analysis is starting
+      if (addMessage) {
+        addMessage("📸 Looking at what you're seeing...", false, 'text');
       }
-    };
 
-    requestPermissions();
-  }, []);
+      const photo = await camera.current.takePhoto({
+        qualityPrioritization: 'speed',
+        flash: 'off',
+        enableAutoRedEyeReduction: false,
+      });
 
-  const frameProcessor = useFrameProcessor(
-    frame => {
-      'worklet';
+      console.log('📸 Auto snapshot taken:', photo.path);
 
-      try {
-        // Simulate a label detection process
-        const labels = [
-          'Object detected',
-          'Motion detected',
-          'Frame processed',
-        ];
-        const randomLabel = labels[Math.floor(Math.random() * labels.length)];
-
-        // Update the shared value with the detected label
-        currentLabel.value = randomLabel;
-      } catch (error) {
-        console.log('Frame processor error:', error);
+      // Add message indicating analysis is in progress
+      if (addMessage) {
+        addMessage('🔍 Analyzing the image with AI vision...', false, 'text');
       }
-    },
-    [currentLabel],
-  );
+
+      // Convert to base64
+      const base64String = await RNFS.readFile(photo.path, 'base64');
+
+      // Analyze with Llama
+      const description = await analyzeImageWithLlama(base64String);
+
+      console.log('🦙 Vision analysis complete:', description);
+
+      // Add the vision analysis result to chat messages
+      if (addMessage) {
+        addMessage(
+          `👁️ **Vision Analysis:**\n\n${description}\n\n*Now asking OpenAI to provide voice insights...*`,
+          false,
+          'text',
+        );
+      }
+
+      // Send description back to OpenAI WebRTC with proper voice configuration
+      if (dataChannel && dataChannel.readyState === 'open') {
+        console.log(
+          '🔗 Sending vision analysis to OpenAI WebRTC for voice response',
+        );
+
+        // Create the conversation item with the vision description
+        const visionMessage = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: `I'm looking at something and here's what I can see: ${description}. Please tell me about what you think I'm looking at using your voice, and provide any relevant information or insights about it.`,
+              },
+            ],
+          },
+        };
+
+        console.log('📤 Sending vision message');
+        dataChannel.send(JSON.stringify(visionMessage));
+
+        // Small delay to ensure message is processed
+        setTimeout(() => {
+          // Create response with voice output
+          const responseConfig = {
+            type: 'response.create',
+            response: {
+              modalities: ['audio'], // Only audio for voice response
+              instructions: `You are helping a user understand what they're looking at. Based on the image description provided, give a helpful, conversational voice response about what you think they're seeing. Be descriptive but natural in your speech. The image description is: "${description}"`,
+              voice: 'alloy',
+              output_audio_format: 'pcm16',
+              max_output_tokens: 200,
+              temperature: 0.7,
+            },
+          };
+
+          console.log('🎙️ Requesting voice response from OpenAI');
+          dataChannel.send(JSON.stringify(responseConfig));
+        }, 500);
+      } else {
+        console.error('❌ DataChannel not available for voice response');
+      }
+
+      // Clean up the temporary photo
+      await RNFS.unlink(photo.path);
+      console.log('🧹 Temporary photo cleaned up');
+
+      // Navigate back after analysis with longer delay for voice response
+      setTimeout(() => {
+        navigation?.goBack();
+      }, 2000); // Longer delay to allow for voice response
+    } catch (error) {
+      console.error('💥 Error in auto vision snapshot:', error);
+
+      // Add error message to chat
+      if (addMessage) {
+        addMessage('❌ Error analyzing image: ' + error.message, false, 'text');
+      }
+
+      // Fallback message to OpenAI with voice response
+      if (dataChannel && dataChannel.readyState === 'open') {
+        const errorMessage = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: "I tried to analyze what I'm looking at but encountered an error with the camera. Can you help me troubleshoot this?",
+              },
+            ],
+          },
+        };
+
+        dataChannel.send(JSON.stringify(errorMessage));
+
+        setTimeout(() => {
+          const errorResponseConfig = {
+            type: 'response.create',
+            response: {
+              modalities: ['audio'],
+              instructions:
+                'The user had trouble with their camera analysis. Respond helpfully using your voice.',
+              voice: 'alloy',
+              output_audio_format: 'pcm16',
+              max_output_tokens: 100,
+              temperature: 0.5,
+            },
+          };
+
+          dataChannel.send(JSON.stringify(errorResponseConfig));
+        }, 300);
+      }
+
+      // Navigate back even on error
+      setTimeout(() => {
+        navigation?.goBack();
+      }, 2000);
+    } finally {
+      setIsAutoVisionProcessing(false);
+    }
+  };
+
+  // Analyze image with Llama API for vision description
+  const analyzeImageWithLlama = async (
+    base64Image: string,
+  ): Promise<string> => {
+    try {
+      console.log('🦙 Analyzing image with Llama...');
+
+      const messageContent = [
+        {
+          type: 'text',
+          text: 'Describe what you see in this image in a concise, natural way. Focus on the main objects, people, scene, and any text visible. Keep it under 100 words and be conversational.',
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:image/jpeg;base64,${base64Image}`,
+          },
+        },
+      ];
+
+      const response = await fetch(CONFIG.LLAMA_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.LLAMA_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: CONFIG.LLAMA_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a helpful vision assistant. Describe images clearly and concisely in a conversational tone.',
+            },
+            {
+              role: 'user',
+              content: messageContent,
+            },
+          ],
+          max_tokens: 200,
+          temperature: 0.3,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Llama API request failed with status ${response.status}`,
+        );
+      }
+
+      const data = await response.json();
+
+      let description = '';
+      if (data.completion_message?.content?.text) {
+        description = data.completion_message.content.text.trim();
+      } else if (
+        data.choices &&
+        data.choices.length > 0 &&
+        data.choices[0].message
+      ) {
+        description = data.choices[0].message.content.trim();
+      } else {
+        throw new Error('Invalid response format from Llama API');
+      }
+
+      console.log('🦙 Image analysis complete:', description);
+      return description;
+    } catch (error) {
+      console.error('💥 Error analyzing image with Llama:', error);
+      return 'I can see an image, but I encountered an error analyzing it.';
+    }
+  };
 
   // Handle picture capture - now takes 1 snapshot
   const handleTakePicture = async () => {
@@ -336,35 +597,30 @@ Provide only the clean JSON output without additional commentary, unless clarifi
       console.log('Model:', CONFIG.LLAMA_MODEL);
       console.log('Content items:', messageContent.length);
 
-      // Use exact same API call structure as App.tsx
-      // const response = await fetch(CONFIG.LLAMA_API_URL, {
-      const response = await fetch(
-        'https://research.metricle.com/api/v1/llama_hackathon/data',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            // Authorization: `Bearer ${CONFIG.LLAMA_API_KEY}`,
-          },
-          body: JSON.stringify({
-            // model: CONFIG.LLAMA_MODEL,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You are a helpful AI assistant. Provide clear, concise, and accurate responses.',
-              },
-              {
-                role: 'user',
-                content: messageContent,
-              },
-            ],
-            max_tokens: 1000,
-            temperature: 0.7,
-            stream: false,
-          }),
+      const response = await fetch(CONFIG.LLAMA_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.LLAMA_API_KEY}`,
         },
-      );
+        body: JSON.stringify({
+          model: CONFIG.LLAMA_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a helpful AI assistant. Provide clear, concise, and accurate responses.',
+            },
+            {
+              role: 'user',
+              content: messageContent,
+            },
+          ],
+          max_tokens: 1000,
+          temperature: 0.7,
+          stream: false,
+        }),
+      });
 
       console.log('📡 Response status:', response.status);
       console.log(
@@ -598,11 +854,23 @@ Provide only the clean JSON output without additional commentary, unless clarifi
           <Ionicons name="close" size={24} color="white" />
         </TouchableOpacity>
 
-        {/* Center Vision Labels */}
-        {!showPreview && <Label sharedValue={currentLabel} />}
+        {/* Auto Vision Processing Indicator */}
+        {isAutoVisionProcessing && (
+          <View style={styles.autoVisionIndicator}>
+            <ActivityIndicator size="large" color="#0081FB" />
+            <Text style={styles.autoVisionText}>
+              🥽 Analyzing what you're looking at...
+            </Text>
+          </View>
+        )}
 
-        {/* Bottom Camera Controls */}
-        {!showPreview && (
+        {/* Center Vision Labels */}
+        {!showPreview && !isAutoVisionProcessing && (
+          <Label sharedValue={currentLabel} />
+        )}
+
+        {/* Bottom Camera Controls - Hide during auto vision processing */}
+        {!showPreview && !isAutoVisionProcessing && (
           <View style={styles.bottomCameraControls}>
             {/* Capture Button - updated text */}
             <Animated.View
@@ -852,13 +1120,13 @@ const styles = StyleSheet.create({
   previewActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingHorizontal: 20, // Reduced padding to fit 3 buttons
+    paddingHorizontal: 20,
     paddingBottom: 50,
     paddingTop: 20,
   },
   actionButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 16, // Reduced padding
+    paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 20,
     flexDirection: 'row',
@@ -878,11 +1146,10 @@ const styles = StyleSheet.create({
   },
   actionText: {
     color: 'white',
-    fontSize: 12, // Slightly smaller text
+    fontSize: 12,
     fontWeight: '600',
-    marginLeft: 6, // Reduced margin
+    marginLeft: 6,
   },
-
   bottomControls: {
     position: 'absolute',
     bottom: 200,
@@ -900,5 +1167,31 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 14,
     lineHeight: 18,
+  },
+  autoVisionIndicator: {
+    position: 'absolute',
+    top: '40%',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 1000,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    marginHorizontal: 40,
+    borderRadius: 20,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+  },
+  autoVisionText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  statusText: {
+    color: 'white',
+    fontSize: 16,
+    textAlign: 'center',
+    marginVertical: 10,
   },
 });

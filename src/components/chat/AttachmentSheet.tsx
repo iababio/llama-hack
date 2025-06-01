@@ -14,9 +14,6 @@ const AttachmentSheet = ({translateY, onOptionPress}: AttachmentSheetProps) => {
   const isDark = IsDarkMode();
   const options = [
     {icon: 'camera', label: 'Camera', value: 'camera', color: '#0081FB'},
-    // {icon: 'image', label: 'Gallery', value: 'gallery', color: '#FF6B6B'},
-    // {icon: 'document', label: 'Document', value: 'document', color: '#FFB84D'},
-    // {icon: 'location', label: 'Location', value: 'location', color: '#9B59B6'},
   ];
 
   const handleOptionPress = (optionValue: string) => {

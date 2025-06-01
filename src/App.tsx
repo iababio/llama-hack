@@ -7,8 +7,8 @@ import {
   Alert,
   Animated,
   TouchableOpacity,
-  Clipboard, // Add this import
-  Vibration, // Add this import
+  Clipboard,
+  Vibration,
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {RTCPeerConnection} from 'react-native-webrtc';
@@ -28,6 +28,10 @@ import {
 } from './functions';
 import RTCDataChannel from 'react-native-webrtc/lib/typescript/RTCDataChannel';
 import {CONFIG} from './utils/rtcConfig';
+import {
+  handleLocationSharing,
+  formatLocationMessage,
+} from './utils/geolocation';
 
 interface Message {
   id: string;
@@ -67,7 +71,7 @@ const App = ({navigation}) => {
   // FlatList ref for scrolling
   const flatListRef = useRef<FlatList>(null);
 
-  // Call Llama API
+  // Call Llama API - Single declaration
   const callLlamaAPI = async (
     userMessage: string,
     images?: string[],
@@ -248,7 +252,7 @@ const App = ({navigation}) => {
       timestamp: new Date(),
       type,
       externalData,
-      isMarkdown,
+      isMarkdown: isMarkdown || text.includes('**') || text.includes('##'), // Auto-detect markdown
     };
     setMessages(prev => [...prev, newMessage]);
     scrollToEnd();
@@ -728,9 +732,16 @@ Be conversational and ensure we have all necessary allergy and customization inf
     }
   };
 
-  // Handle OpenAI Events wrapper
+  // Handle OpenAI Events wrapper - Updated to pass navigation and camera state
   const handleOpenAIEvent = (event: {data: string}) => {
-    handleOpenAIEventFunc(event, addMessage);
+    handleOpenAIEventFunc(
+      event,
+      addMessage,
+      navigation, // Pass navigation
+      false, // isCameraOpen - false since we're in main app
+      undefined, // camera ref - not available in main app
+      dataChannel, // Pass dataChannel for sending back to OpenAI
+    );
   };
 
   // Handle voice press - Only for WebRTC voice functionality
@@ -767,7 +778,7 @@ Be conversational and ensure we have all necessary allergy and customization inf
   };
 
   // Handle attachment option selection
-  const handleAttachmentOption = (option: string) => {
+  const handleAttachmentOption = async (option: string) => {
     setAttachmentSheetVisible(false);
 
     switch (option) {
@@ -786,6 +797,7 @@ Be conversational and ensure we have all necessary allergy and customization inf
           },
         });
         break;
+
       case 'gallery':
         console.log('Gallery selected');
         navigation?.navigate('Gallery', {
@@ -801,14 +813,89 @@ Be conversational and ensure we have all necessary allergy and customization inf
           },
         });
         break;
+
+      case 'location':
+        console.log('📍 Location option selected');
+        try {
+          // Show loading message
+          addMessage('📍 Getting your location...', false, 'text');
+
+          // Get location with user confirmation
+          const locationMessage = await handleLocationSharing();
+
+          // Remove loading message
+          setMessages(prev => prev.slice(0, -1));
+
+          // Add location as user message (since user is sharing their location)
+          addMessage(locationMessage, true, 'text', undefined, true);
+
+          // Add AI response about the location
+          if (locationMessage.includes('Address:')) {
+            // Extract address for AI context
+            const addressMatch = locationMessage.match(
+              /\*\*Address:\*\* (.+)\n/,
+            );
+            const address = addressMatch ? addressMatch[1] : 'your location';
+
+            // Send to Llama for contextual response
+            try {
+              const contextPrompt = `The user shared their location: ${address}. Provide a helpful response acknowledging their location and offering relevant assistance (like nearby restaurants, weather, directions, etc.). Be conversational and helpful.`;
+
+              addMessage('🤖 Analyzing your location...', false, 'text');
+              const aiResponse = await callLlamaAPI(contextPrompt);
+
+              // Remove analyzing message
+              setMessages(prev => prev.slice(0, -1));
+
+              // Add AI response with markdown
+              addMessage(aiResponse, false, 'text', undefined, true);
+            } catch (error) {
+              console.error('Error getting AI response for location:', error);
+              // Remove analyzing message
+              setMessages(prev => prev.slice(0, -1));
+
+              // Add simple acknowledgment
+              addMessage(
+                '📍 Thanks for sharing your location! I can help you find nearby places or provide directions if needed.',
+                false,
+                'text',
+              );
+            }
+          }
+        } catch (error) {
+          console.error('Error handling location sharing:', error);
+
+          // Remove loading message if it exists
+          setMessages(prev => {
+            if (prev[prev.length - 1]?.text.includes('Getting your location')) {
+              return prev.slice(0, -1);
+            }
+            return prev;
+          });
+
+          // Show error message
+          let errorMessage = '❌ Unable to get your location';
+          if (error.message.includes('permission')) {
+            errorMessage =
+              '❌ Location permission denied. Please enable location access in your device settings.';
+          } else if (error.message.includes('cancelled')) {
+            errorMessage = '📍 Location sharing cancelled';
+          } else if (error.message.includes('unavailable')) {
+            errorMessage =
+              '❌ Location unavailable. Please check your GPS settings.';
+          } else if (error.message.includes('timeout')) {
+            errorMessage = '❌ Location request timed out. Please try again.';
+          }
+
+          addMessage(errorMessage, false, 'text');
+        }
+        break;
+
       case 'document':
         console.log('Document selected');
         Alert.alert('Document', 'Document functionality coming soon!');
         break;
-      case 'location':
-        console.log('Location selected');
-        Alert.alert('Location', 'Location functionality coming soon!');
-        break;
+
       default:
         console.log('Unknown option:', option);
     }
@@ -1012,6 +1099,43 @@ Be conversational and ensure we have all necessary allergy and customization inf
     );
   };
 
+  // Clear all messages function
+  const clearAllMessages = () => {
+    Alert.alert(
+      'Clear Conversation',
+      'Are you sure you want to delete all messages? This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: () => {
+            setMessages([]);
+            messageCounter.current = 0;
+
+            // Reset order state as well
+            setOrderState({});
+
+            // Provide feedback
+            Vibration.vibrate(100);
+
+            // Add a welcome message after clearing
+            setTimeout(() => {
+              addMessage(
+                '👋 Hello! How can I help you today?',
+                false,
+                'text',
+              );
+            }, 500);
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
@@ -1019,6 +1143,21 @@ Be conversational and ensure we have all necessary allergy and customization inf
         <View style={styles.header}>
           <Text style={styles.title}>Meta Hack</Text>
           <View style={styles.headerRight}>
+            {/* Clear Messages Button */}
+            {messages.length > 0 && (
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={clearAllMessages}
+                activeOpacity={0.7}>
+                <Ionicons
+                  name="trash-outline"
+                  size={16}
+                  color="#FF3B30"
+                />
+                <Text style={styles.clearButtonText}>Clear</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Llama Loading Indicator */}
             {isLoadingLlama && (
               <View style={styles.loadingIndicator}>
@@ -1063,16 +1202,41 @@ Be conversational and ensure we have all necessary allergy and customization inf
 
         {/* Messages */}
         <View style={styles.messagesContainer}>
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            renderItem={renderMessage}
-            keyExtractor={item => item.id}
-            style={styles.messagesList}
-            contentContainerStyle={styles.messagesContent}
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={scrollToEnd}
-          />
+          {messages.length === 0 ? (
+            // Empty state when no messages
+            <View style={styles.emptyStateContainer}>
+              <Ionicons name="chatbubbles-outline" size={64} color="#C7C7CC" />
+              <Text style={styles.emptyStateTitle}>No messages yet</Text>
+              <Text style={styles.emptyStateSubtitle}>
+                Start a conversation by typing a message or using voice chat
+              </Text>
+              <View style={styles.emptyStateFeatures}>
+                <View style={styles.featureItem}>
+                  <Ionicons name="mic" size={20} color="#0081FB" />
+                  <Text style={styles.featureText}>Voice Chat</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Ionicons name="camera" size={20} color="#0081FB" />
+                  <Text style={styles.featureText}>Vision Analysis</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Ionicons name="location" size={20} color="#0081FB" />
+                  <Text style={styles.featureText}>Location Sharing</Text>
+                </View>
+              </View>
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              renderItem={renderMessage}
+              keyExtractor={item => item.id}
+              style={styles.messagesList}
+              contentContainerStyle={styles.messagesContent}
+              showsVerticalScrollIndicator={false}
+              onContentSizeChange={scrollToEnd}
+            />
+          )}
         </View>
 
         {/* Chat Input */}
@@ -1083,9 +1247,11 @@ Be conversational and ensure we have all necessary allergy and customization inf
           handleVoicePress={handleVoicePress}
           handleAttachmentPress={handleAttachmentPress}
           onAttachmentOption={handleAttachmentOption}
+          onClearMessages={clearAllMessages} // Add this prop
           isRecording={isRecording}
           attachmentSheetVisible={attachmentSheetVisible}
           scrollToEnd={scrollToEnd}
+          hasMessages={messages.length > 0} // Add this prop
         />
       </SafeAreaView>
     </SafeAreaProvider>
@@ -1114,6 +1280,21 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 59, 48, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 10,
+  },
+  clearButtonText: {
+    color: '#FF3B30',
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   loadingIndicator: {
     backgroundColor: 'rgba(255, 184, 77, 0.1)',
@@ -1158,6 +1339,46 @@ const styles = StyleSheet.create({
   messagesContent: {
     paddingVertical: 10,
     flexGrow: 1,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 40,
+  },
+  emptyStateTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateSubtitle: {
+    fontSize: 16,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+  },
+  emptyStateFeatures: {
+    alignItems: 'center',
+    gap: 16,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 129, 251, 0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    minWidth: 140,
+  },
+  featureText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0081FB',
+    marginLeft: 8,
   },
   messageContainer: {
     marginVertical: 5,
