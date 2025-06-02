@@ -1104,6 +1104,7 @@ Be conversational and ensure we have all necessary allergy and customization inf
     Alert.alert(
       'Clear Conversation',
       'Are you sure you want to delete all messages? This action cannot be undone.',
+
       [
         {
           text: 'Cancel',
