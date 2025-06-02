@@ -1,3 +1,5 @@
+import { CONFIG } from "../utils/rtcConfig";
+
 /**
  * Check if the message contains keywords related to location, restaurants, shops, products, or weather
  * @param message - The message to check
@@ -126,7 +128,7 @@ export const fetchExternalQueryResponse = async (query: string) => {
     const response = await fetch(`https://api.hasdata.com/scrape/google/serp?${queryParams}`, {
       method: 'GET',
       headers: {
-        'x-api-key': 'cb81ac2d-e7dd-4c1e-928c-20d649c2d2da',
+        'x-api-key': CONFIG.HASDATA_API_KEY,
         'Content-Type': 'application/json',
       }
     });
@@ -222,7 +224,7 @@ export const fetchLocationSpecificQuery = async (query: string, userLocation?: s
     const response = await fetch(`https://api.hasdata.com/scrape/google/serp?${queryParams}`, {
       method: 'GET',
       headers: {
-        'x-api-key': 'cb81ac2d-e7dd-4c1e-928c-20d649c2d2da',
+        'x-api-key': CONFIG.HASDATA_API_KEY,
         'Content-Type': 'application/json',
       }
     });

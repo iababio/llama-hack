@@ -1099,11 +1099,11 @@ Be conversational and ensure we have all necessary allergy and customization inf
     );
   };
 
-  // Add this function after the other handler functions
-  const handleClearChat = () => {
+  // Clear all messages function
+  const clearAllMessages = () => {
     Alert.alert(
-      'Clear Chat',
-      'Are you sure you want to clear all messages? This action cannot be undone.',
+      'Clear Conversation',
+      'Are you sure you want to delete all messages? This action cannot be undone.',
 
       [
         {
@@ -1111,21 +1111,26 @@ Be conversational and ensure we have all necessary allergy and customization inf
           style: 'cancel',
         },
         {
-          text: 'Clear',
+          text: 'Clear All',
           style: 'destructive',
           onPress: () => {
             setMessages([]);
-            setOrderState({});
             messageCounter.current = 0;
+
+            // Reset order state as well
+            setOrderState({});
+
+            // Provide feedback
+            Vibration.vibrate(100);
+
             // Add a welcome message after clearing
             setTimeout(() => {
               addMessage(
-                'Chat cleared! How can I help you today?',
+                '👋 Hello! How can I help you today?',
                 false,
                 'text',
               );
-            }, 100);
-
+            }, 500);
           },
         },
       ],
@@ -1139,14 +1144,20 @@ Be conversational and ensure we have all necessary allergy and customization inf
         <View style={styles.header}>
           <Text style={styles.title}>Meta Hack</Text>
           <View style={styles.headerRight}>
-            {/* Clear Chat Button */}
-            <TouchableOpacity
-              style={styles.clearButton}
-              onPress={handleClearChat}
-              activeOpacity={0.7}>
-              <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
-            </TouchableOpacity>
-
+            {/* Clear Messages Button */}
+            {messages.length > 0 && (
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={clearAllMessages}
+                activeOpacity={0.7}>
+                <Ionicons
+                  name="trash-outline"
+                  size={16}
+                  color="#FF3B30"
+                />
+                <Text style={styles.clearButtonText}>Clear</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Llama Loading Indicator */}
             {isLoadingLlama && (
@@ -1426,14 +1437,6 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 5,
     alignSelf: 'flex-end',
-  },
-  clearButton: {
-    padding: 8,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 107, 107, 0.1)',
-    marginRight: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });
 
